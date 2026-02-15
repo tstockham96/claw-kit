@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.env
+*.log
+conversations/
+
+# Keep memory templates but ignore personal data
+kit/memory/journal/*.md
+!kit/memory/journal/.gitkeep
+kit/memory/people/*.md
+!kit/memory/people/_index.md
+kit/memory/projects/*.md
+!kit/memory/projects/_index.md
+kit/memory/decisions/*.md
+!kit/memory/decisions/.gitkeep

@@ -1,0 +1,348 @@
+import { Telegraf, Context } from 'telegraf';
+import { message } from 'telegraf/filters';
+import { Config } from '../types';
+import { ClaudeService } from '../services/claude';
+import { MemoryService } from '../services/memory';
+import { ConversationService } from '../services/conversation';
+import { shouldRespondInGroup } from './groups';
+
+const TELEGRAM_MAX_LENGTH = 4096;
+
+// Track recent group messages for classifier context
+const groupMessageHistory = new Map<number, string[]>();
+const MAX_GROUP_HISTORY = 10;
+
+function splitMessage(text: string): string[] {
+  if (text.length <= TELEGRAM_MAX_LENGTH) return [text];
+
+  const parts: string[] = [];
+  let remaining = text;
+
+  while (remaining.length > 0) {
+    if (remaining.length <= TELEGRAM_MAX_LENGTH) {
+      parts.push(remaining);
+      break;
+    }
+
+    // Try to split at a natural boundary
+    let splitIndex = remaining.lastIndexOf('\n\n', TELEGRAM_MAX_LENGTH);
+    if (splitIndex === -1 || splitIndex < TELEGRAM_MAX_LENGTH / 2) {
+      splitIndex = remaining.lastIndexOf('\n', TELEGRAM_MAX_LENGTH);
+    }
+    if (splitIndex === -1 || splitIndex < TELEGRAM_MAX_LENGTH / 2) {
+      splitIndex = remaining.lastIndexOf('. ', TELEGRAM_MAX_LENGTH);
+    }
+    if (splitIndex === -1 || splitIndex < TELEGRAM_MAX_LENGTH / 2) {
+      splitIndex = TELEGRAM_MAX_LENGTH;
+    }
+
+    parts.push(remaining.substring(0, splitIndex));
+    remaining = remaining.substring(splitIndex).trimStart();
+  }
+
+  return parts;
+}
+
+async function sendLongMessage(ctx: Context, text: string): Promise<void> {
+  const parts = splitMessage(text);
+  for (const part of parts) {
+    await ctx.reply(part);
+  }
+}
+
+function isGroupChat(ctx: Context): boolean {
+  return ctx.chat?.type === 'group' || ctx.chat?.type === 'supergroup';
+}
+
+function trackGroupMessage(chatId: number, senderName: string, text: string): void {
+  const history = groupMessageHistory.get(chatId) || [];
+  history.push(`${senderName}: ${text}`);
+  if (history.length > MAX_GROUP_HISTORY) {
+    history.shift();
+  }
+  groupMessageHistory.set(chatId, history);
+}
+
+export function registerHandlers(bot: Telegraf, config: Config): void {
+  const claude = new ClaudeService(config);
+  const memory = new MemoryService(config.memoryPath);
+  const conversations = new ConversationService(config);
+
+  // /start command
+  bot.start(async (ctx) => {
+    const name = ctx.from.first_name || 'there';
+    await ctx.reply(
+      `Hey ${name}! I'm your Claw Kit AI assistant, powered by Claude.\n\n` +
+      `You can just chat with me naturally, or use these commands:\n\n` +
+      `/status - See what I know and remember\n` +
+      `/remember <thing> - Save something to memory\n` +
+      `/forget <thing> - Remove something from memory\n` +
+      `/clear - Clear conversation context\n` +
+      `/help - Show all commands\n\n` +
+      `I have access to your memory files, so I'll remember context across conversations.`
+    );
+  });
+
+  // /help command
+  bot.help(async (ctx) => {
+    await ctx.reply(
+      `*Available Commands*\n\n` +
+      `/start - Welcome message\n` +
+      `/status - Memory status overview\n` +
+      `/remember <thing> - Save to memory\n` +
+      `/forget <thing> - Remove from memory\n` +
+      `/clear - Clear conversation history\n` +
+      `/help - This message\n\n` +
+      `Or just send me a message and I'll chat with you using Claude!`,
+      { parse_mode: 'Markdown' }
+    );
+  });
+
+  // /status command
+  bot.command('status', async (ctx) => {
+    try {
+      const memoryContext = await memory.loadContext();
+
+      const sections: string[] = [];
+
+      if (memoryContext.identity) {
+        const lines = memoryContext.identity.split('\n').filter(l => l.trim()).slice(0, 3);
+        sections.push(`*Identity:* ${lines.join(', ').substring(0, 200)}`);
+      }
+      if (memoryContext.user) {
+        const lines = memoryContext.user.split('\n').filter(l => l.trim()).slice(0, 3);
+        sections.push(`*User:* ${lines.join(', ').substring(0, 200)}`);
+      }
+      if (memoryContext.longTerm) {
+        const lineCount = memoryContext.longTerm.split('\n').filter(l => l.trim()).length;
+        sections.push(`*Long-term memory:* ${lineCount} entries`);
+      }
+      if (memoryContext.preferences) {
+        const lineCount = memoryContext.preferences.split('\n').filter(l => l.trim()).length;
+        sections.push(`*Preferences:* ${lineCount} entries`);
+      }
+      if (memoryContext.learnings) {
+        const lineCount = memoryContext.learnings.split('\n').filter(l => l.trim()).length;
+        sections.push(`*Learnings:* ${lineCount} entries`);
+      }
+      if (memoryContext.todayJournal) {
+        sections.push(`*Today's journal:* Active`);
+      }
+      if (memoryContext.projectsIndex) {
+        const lineCount = memoryContext.projectsIndex.split('\n').filter(l => l.trim()).length;
+        sections.push(`*Projects:* ${lineCount} indexed`);
+      }
+      if (memoryContext.peopleIndex) {
+        const lineCount = memoryContext.peopleIndex.split('\n').filter(l => l.trim()).length;
+        sections.push(`*People:* ${lineCount} indexed`);
+      }
+
+      if (sections.length === 0) {
+        await ctx.reply('No memory files found yet. Start chatting and use /remember to build up my memory!');
+      } else {
+        await ctx.reply(`*Memory Status*\n\n${sections.join('\n')}`, { parse_mode: 'Markdown' });
+      }
+    } catch (err) {
+      console.error('Error in /status:', err);
+      await ctx.reply('Failed to load memory status. Check that the memory path is configured correctly.');
+    }
+  });
+
+  // /remember command
+  bot.command('remember', async (ctx) => {
+    const text = ctx.message.text.replace(/^\/remember\s*/, '').trim();
+
+    if (!text) {
+      await ctx.reply('Usage: /remember <something to remember>\n\nExamples:\n/remember I prefer dark mode\n/remember Meeting with Alex on Friday');
+      return;
+    }
+
+    try {
+      // Route to the appropriate memory file based on content
+      const target = classifyMemoryTarget(text);
+      await memory.appendToFile(target.file, target.formatted);
+
+      // Also log to journal
+      await memory.appendToJournal(`[Telegram] Remembered: ${text}`);
+
+      await ctx.reply(`Got it! Saved to ${target.label}.`);
+    } catch (err) {
+      console.error('Error in /remember:', err);
+      await ctx.reply('Failed to save to memory. Please try again.');
+    }
+  });
+
+  // /forget command
+  bot.command('forget', async (ctx) => {
+    const text = ctx.message.text.replace(/^\/forget\s*/, '').trim();
+
+    if (!text) {
+      await ctx.reply('Usage: /forget <something to remove>\n\nI\'ll search my memory files and remove matching entries.');
+      return;
+    }
+
+    try {
+      const results = await memory.searchMemory(text);
+
+      if (results.length === 0) {
+        await ctx.reply(`I couldn't find anything matching "${text}" in my memory.`);
+        return;
+      }
+
+      let removed = false;
+      for (const result of results) {
+        const success = await memory.removeFromFile(result.file, text);
+        if (success) removed = true;
+      }
+
+      if (removed) {
+        await memory.appendToJournal(`[Telegram] Forgot: ${text}`);
+        await ctx.reply(`Done! Removed entries matching "${text}" from memory.`);
+      } else {
+        await ctx.reply(`Found "${text}" in memory but couldn't remove it cleanly. You may want to edit the files directly.`);
+      }
+    } catch (err) {
+      console.error('Error in /forget:', err);
+      await ctx.reply('Failed to search/remove from memory. Please try again.');
+    }
+  });
+
+  // /clear command
+  bot.command('clear', async (ctx) => {
+    const chatId = ctx.chat.id;
+    await conversations.clearContext(chatId);
+    await ctx.reply('Conversation history cleared! Starting fresh.');
+  });
+
+  // Text message handler
+  bot.on(message('text'), async (ctx) => {
+    const chatId = ctx.chat.id;
+    const userMessage = ctx.message.text;
+    const senderName = ctx.from.first_name || ctx.from.username || 'User';
+
+    // Group chat handling
+    if (isGroupChat(ctx)) {
+      if (!config.groupChatEnabled) return;
+
+      trackGroupMessage(chatId, senderName, userMessage);
+
+      try {
+        const botInfo = await ctx.telegram.getMe();
+        const botUsername = botInfo.username || '';
+        const recentMessages = groupMessageHistory.get(chatId) || [];
+
+        const shouldRespond = await shouldRespondInGroup(
+          config,
+          botUsername,
+          userMessage,
+          senderName,
+          recentMessages,
+        );
+
+        if (!shouldRespond) return;
+      } catch (err) {
+        console.error('Error in group classifier:', err);
+        return; // When in doubt in groups, stay quiet
+      }
+    }
+
+    // Show typing indicator
+    await ctx.sendChatAction('typing');
+
+    try {
+      // Load memory and conversation context
+      const [memoryContext, history] = await Promise.all([
+        memory.loadContext(),
+        conversations.getContext(chatId),
+      ]);
+
+      // Get response from Claude
+      const response = await claude.chat(userMessage, memoryContext, history);
+
+      // Store the exchange
+      await conversations.addMessage(chatId, 'user', userMessage);
+      await conversations.addMessage(chatId, 'assistant', response);
+
+      // Send response
+      await sendLongMessage(ctx, response);
+
+      // Journal significant interactions (longer exchanges, not just greetings)
+      if (userMessage.length > 50 || response.length > 200) {
+        const summary = userMessage.length > 100
+          ? userMessage.substring(0, 100) + '...'
+          : userMessage;
+        await memory.appendToJournal(
+          `[Telegram chat] User: ${summary}\nAssistant responded (${response.length} chars)`
+        );
+      }
+    } catch (err) {
+      console.error('Error handling message:', err);
+
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+
+      if (errorMessage.includes('rate_limit') || errorMessage.includes('429')) {
+        await ctx.reply('I\'m being rate-limited by the API. Please wait a moment and try again.');
+      } else if (errorMessage.includes('authentication') || errorMessage.includes('401')) {
+        await ctx.reply('API authentication error. Please check the ANTHROPIC_API_KEY configuration.');
+      } else {
+        await ctx.reply('Sorry, something went wrong. Please try again.');
+      }
+    }
+  });
+
+  // Periodic conversation cleanup (every hour)
+  setInterval(() => {
+    conversations.cleanup().catch(err => {
+      console.error('Error during conversation cleanup:', err);
+    });
+  }, 60 * 60 * 1000);
+}
+
+interface MemoryTarget {
+  file: string;
+  label: string;
+  formatted: string;
+}
+
+function classifyMemoryTarget(text: string): MemoryTarget {
+  const lower = text.toLowerCase();
+
+  // Check for preference-related keywords
+  if (lower.includes('prefer') || lower.includes('like') || lower.includes('don\'t like') ||
+      lower.includes('favorite') || lower.includes('favourite') || lower.includes('want') ||
+      lower.includes('style') || lower.includes('mode')) {
+    return {
+      file: 'preferences.md',
+      label: 'preferences',
+      formatted: `- ${text}`,
+    };
+  }
+
+  // Check for learning-related keywords
+  if (lower.includes('learned') || lower.includes('realized') || lower.includes('discovered') ||
+      lower.includes('figured out') || lower.includes('turns out') || lower.includes('til ') ||
+      lower.includes('today i learned')) {
+    return {
+      file: 'learnings.md',
+      label: 'learnings',
+      formatted: `- ${text}`,
+    };
+  }
+
+  // Check for people-related keywords
+  if (lower.includes('meeting with') || lower.includes('talked to') || lower.includes('spoke with') ||
+      lower.includes('email from') || lower.includes('call with')) {
+    return {
+      file: 'long-term.md',
+      label: 'long-term memory',
+      formatted: `- ${text}`,
+    };
+  }
+
+  // Default to long-term memory
+  return {
+    file: 'long-term.md',
+    label: 'long-term memory',
+    formatted: `- ${text}`,
+  };
+}
