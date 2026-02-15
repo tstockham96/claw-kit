@@ -28,11 +28,12 @@ function loadConfig(): Config {
 async function main() {
   const config = loadConfig();
 
-  // Health check server
+  // Health check server (bound to localhost only)
   const app = express();
-  app.get('/health', (_req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
-  app.listen(config.port, () => {
-    console.log(`Health check server running on port ${config.port}`);
+  app.disable('x-powered-by');
+  app.get('/health', (_req, res) => res.json({ status: 'ok' }));
+  app.listen(config.port, '127.0.0.1', () => {
+    console.log(`Health check server running on http://127.0.0.1:${config.port}`);
   });
 
   // Start bot

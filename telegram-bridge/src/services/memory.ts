@@ -11,6 +11,15 @@ export class MemoryService {
     this.basePath = resolve(__dirname, '../../', memoryPath);
   }
 
+  /** Validate that a resolved path stays within the memory directory */
+  private validatePath(fileName: string): string {
+    const resolved = resolve(join(this.basePath, fileName));
+    if (!resolved.startsWith(this.basePath)) {
+      throw new Error(`Path traversal blocked: ${fileName}`);
+    }
+    return resolved;
+  }
+
   private async safeRead(filePath: string): Promise<string> {
     try {
       return await readFile(filePath, 'utf-8');
@@ -61,7 +70,7 @@ export class MemoryService {
   }
 
   async appendToFile(fileName: string, content: string): Promise<void> {
-    const filePath = join(this.basePath, fileName);
+    const filePath = this.validatePath(fileName);
     const dir = filePath.substring(0, filePath.lastIndexOf('/'));
     if (!existsSync(dir)) {
       await mkdir(dir, { recursive: true });
@@ -72,11 +81,11 @@ export class MemoryService {
   }
 
   async readMemoryFile(fileName: string): Promise<string> {
-    return this.safeRead(join(this.basePath, fileName));
+    return this.safeRead(this.validatePath(fileName));
   }
 
   async writeMemoryFile(fileName: string, content: string): Promise<void> {
-    const filePath = join(this.basePath, fileName);
+    const filePath = this.validatePath(fileName);
     const dir = filePath.substring(0, filePath.lastIndexOf('/'));
     if (!existsSync(dir)) {
       await mkdir(dir, { recursive: true });
@@ -129,7 +138,7 @@ export class MemoryService {
   }
 
   async removeFromFile(fileName: string, contentToRemove: string): Promise<boolean> {
-    const filePath = join(this.basePath, fileName);
+    const filePath = this.validatePath(fileName);
     const content = await this.safeRead(filePath);
     if (!content) return false;
 

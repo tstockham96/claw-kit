@@ -40,6 +40,7 @@ Based on the classification:
 
 #### Person
 - Derive a filename from the person's name: lowercase, hyphens for spaces (e.g., `jane-smith.md`)
+- **Sanitize the filename:** strip any characters that are not alphanumeric, hyphens, or underscores. Never allow path separators (/ or \) in the filename.
 - Check if `memory/people/[name].md` exists
   - If yes: read it and append/update the relevant section
   - If no: create it with this structure:
@@ -59,6 +60,7 @@ Based on the classification:
 
 #### Project
 - Derive a filename from the project name: lowercase, hyphens for spaces (e.g., `my-app.md`)
+- **Sanitize the filename:** strip any characters that are not alphanumeric, hyphens, or underscores. Never allow path separators (/ or \) in the filename.
 - Check if `memory/projects/[name].md` exists
   - If yes: read it and append/update the relevant section
   - If no: create it with this structure:

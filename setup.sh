@@ -121,17 +121,17 @@ fi
 touch "$MEMORY_DIR/journal/.gitkeep"
 touch "$MEMORY_DIR/decisions/.gitkeep"
 
-# Write identity.md
-cat > "$MEMORY_DIR/identity.md" << EOF
+# Write identity.md (quoted heredoc to prevent shell injection, then substitute)
+cat > "$MEMORY_DIR/identity.md" << 'IDENTITY_EOF'
 # Identity
 
 ## Core
-- **Name:** $ai_name
-- **Personality:** $personality
-- **Role:** $ai_role
+- **Name:** __AI_NAME__
+- **Personality:** __PERSONALITY__
+- **Role:** __AI_ROLE__
 
 ## Communication Style
-- $voice
+- __VOICE__
 - No sycophancy — skip "Great question!" and similar filler
 - Have opinions when asked — don't hedge excessively
 - Be honest about uncertainty — say "I don't know" rather than guessing
@@ -143,23 +143,40 @@ cat > "$MEMORY_DIR/identity.md" << EOF
 
 ## Evolution
 <!-- This section evolves as the AI develops its own style and preferences over time -->
-EOF
+IDENTITY_EOF
 
-# Write user.md
-cat > "$MEMORY_DIR/user.md" << EOF
+# Safely substitute user values (escape sed delimiters in user input)
+safe_ai_name=$(printf '%s' "$ai_name" | sed 's/[&/\]/\\&/g')
+safe_personality=$(printf '%s' "$personality" | sed 's/[&/\]/\\&/g')
+safe_ai_role=$(printf '%s' "$ai_role" | sed 's/[&/\]/\\&/g')
+safe_voice=$(printf '%s' "$voice" | sed 's/[&/\]/\\&/g')
+sed -i '' "s/__AI_NAME__/$safe_ai_name/" "$MEMORY_DIR/identity.md"
+sed -i '' "s/__PERSONALITY__/$safe_personality/" "$MEMORY_DIR/identity.md"
+sed -i '' "s/__AI_ROLE__/$safe_ai_role/" "$MEMORY_DIR/identity.md"
+sed -i '' "s/__VOICE__/$safe_voice/" "$MEMORY_DIR/identity.md"
+
+# Write user.md (quoted heredoc to prevent shell injection, then substitute)
+cat > "$MEMORY_DIR/user.md" << 'USER_EOF'
 # About the User
 
 ## Basics
-- **Name:** $user_name
-- **Timezone:** $user_tz
-- **Role:** $user_role
+- **Name:** __USER_NAME__
+- **Timezone:** __USER_TZ__
+- **Role:** __USER_ROLE__
 
 ## Context
 <!-- The AI adds context about the user as it learns through conversations -->
-EOF
+USER_EOF
+
+safe_user_name=$(printf '%s' "$user_name" | sed 's/[&/\]/\\&/g')
+safe_user_tz=$(printf '%s' "$user_tz" | sed 's/[&/\]/\\&/g')
+safe_user_role=$(printf '%s' "$user_role" | sed 's/[&/\]/\\&/g')
+sed -i '' "s/__USER_NAME__/$safe_user_name/" "$MEMORY_DIR/user.md"
+sed -i '' "s/__USER_TZ__/$safe_user_tz/" "$MEMORY_DIR/user.md"
+sed -i '' "s/__USER_ROLE__/$safe_user_role/" "$MEMORY_DIR/user.md"
 
 # Write long-term.md
-cat > "$MEMORY_DIR/long-term.md" << EOF
+cat > "$MEMORY_DIR/long-term.md" << 'EOF'
 # Long-Term Memory
 Key facts and important information. Updated by /remember and /reflect.
 
@@ -171,7 +188,7 @@ Key facts and important information. Updated by /remember and /reflect.
 EOF
 
 # Write preferences.md
-cat > "$MEMORY_DIR/preferences.md" << EOF
+cat > "$MEMORY_DIR/preferences.md" << 'EOF'
 # Preferences
 Discovered preferences about the user. Updated as patterns are noticed.
 
@@ -186,7 +203,7 @@ Discovered preferences about the user. Updated as patterns are noticed.
 EOF
 
 # Write learnings.md
-cat > "$MEMORY_DIR/learnings.md" << EOF
+cat > "$MEMORY_DIR/learnings.md" << 'EOF'
 # Learnings
 Mistakes, corrections, and lessons learned. Updated by /remember and /reflect.
 
@@ -198,7 +215,7 @@ Mistakes, corrections, and lessons learned. Updated by /remember and /reflect.
 EOF
 
 # Write people/_index.md
-cat > "$MEMORY_DIR/people/_index.md" << EOF
+cat > "$MEMORY_DIR/people/_index.md" << 'EOF'
 # People
 Quick reference of known people.
 
@@ -206,7 +223,7 @@ Quick reference of known people.
 EOF
 
 # Write projects/_index.md
-cat > "$MEMORY_DIR/projects/_index.md" << EOF
+cat > "$MEMORY_DIR/projects/_index.md" << 'EOF'
 # Projects
 Active and recent projects.
 

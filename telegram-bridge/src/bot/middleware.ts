@@ -3,9 +3,10 @@ import { Config } from '../types';
 
 export function createAuthMiddleware(config: Config): MiddlewareFn<Context> {
   return async (ctx, next) => {
-    // If no allowed users configured, allow all
+    // If no allowed users configured, deny all (secure by default)
     if (config.allowedUsers.length === 0) {
-      return next();
+      console.warn('ALLOWED_USERS is not set — bot will not respond to anyone. Configure ALLOWED_USERS in .env.');
+      return;
     }
 
     const userId = ctx.from?.id;
