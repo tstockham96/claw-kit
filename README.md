@@ -6,9 +6,17 @@ Give your Claude Code a name, personality, and long-term memory that persists ac
 
 ## Why
 
-AI assistants forget everything between sessions. Claw Kit fixes that with a simple file-based memory system that Claude Code reads on startup and updates as you work together.
+[OpenClaw](https://github.com/openclaw) proved the concept: an AI agent with persistent identity, long-term memory, and messaging integration. But its implementation has real security concerns — VirusTotal flags on skill files, an unofficial WhatsApp library ([Baileys](https://github.com/WhiskeySockets/Baileys)) that hijacks your personal session, an opaque SQLite memory store you can't easily inspect, and an always-on gateway daemon running in the background.
 
-Inspired by [OpenClaw](https://github.com/openclaw) but rebuilt from scratch for Claude Code's ecosystem — no daemons, no unofficial libraries, no opaque databases. Just markdown files you can read, edit, and version control.
+**Claw Kit is the safe version.** Same powerful features, none of the risk:
+
+- **No daemon** — nothing runs unless you start it
+- **No unofficial libraries** — Telegram bridge uses the official Bot API, not session hijacking
+- **No opaque databases** — all memory is plaintext markdown you can read in any text editor
+- **No VirusTotal flags** — every file is auditable, every line is readable
+- **Your data stays yours** — memory files live on your machine, version-controllable with git
+
+If you liked what OpenClaw was going for but didn't trust running it, this is for you.
 
 ## Features
 
@@ -18,8 +26,8 @@ Inspired by [OpenClaw](https://github.com/openclaw) but rebuilt from scratch for
 - **People & Projects** — Track relationships and project state
 - **Decision Log** — Record decisions with rationale for future reference
 - **Slash Commands** — `/remember`, `/status`, `/reflect`, `/briefing`, `/forget`
-- **Telegram Bridge** — Optional: chat with your AI over Telegram using official APIs
-- **Fully Auditable** — Everything is plaintext markdown. No databases, no binaries.
+- **Telegram Bridge** — Optional: chat with your AI over Telegram using the official Bot API
+- **Fully Auditable** — Everything is plaintext markdown. No databases, no binaries, no surprises.
 
 ## Quick Start
 
@@ -103,17 +111,19 @@ npm run dev
 
 See [`telegram-bridge/README.md`](telegram-bridge/README.md) for full documentation.
 
-## Security
+## Security: Claw Kit vs OpenClaw
 
-Claw Kit is designed to be safer than alternatives like OpenClaw:
+The whole point of Claw Kit is that you can trust what's running on your machine.
 
 | | Claw Kit | OpenClaw |
 |---|---|---|
-| **Daemon** | None — runs only when you start it | Always-on gateway daemon |
-| **Messaging** | Official Telegram Bot API | Unofficial WhatsApp library (Baileys) |
-| **Memory** | Plaintext markdown files | Opaque SQLite database |
-| **Auth** | User allowlisting | Session hijacking risk |
-| **Audit** | Read every file in a text editor | VirusTotal flags on skills |
+| **Runtime** | Nothing runs unless you start it | Always-on gateway daemon |
+| **Messaging** | Official Telegram Bot API | Unofficial WhatsApp library (Baileys) that hijacks your personal WhatsApp session |
+| **Memory storage** | Plaintext markdown — open in any text editor | Opaque SQLite database |
+| **Authentication** | Telegram bot token (separate identity) + user allowlisting | Your personal WhatsApp session token — if compromised, attacker has your WhatsApp |
+| **Code trust** | Every file is readable, no compiled/obfuscated code | VirusTotal flags on skill files |
+| **Data portability** | Copy your `memory/` folder anywhere, version control with git | Locked in SQLite, requires migration tooling |
+| **Attack surface** | Claude Code + optional Telegram bot | Always-on daemon + WhatsApp Web socket + SQLite + skill system |
 
 ## Identity Templates
 
