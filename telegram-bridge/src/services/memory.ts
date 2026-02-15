@@ -106,6 +106,9 @@ export class MemoryService {
     // Search decisions directory
     await this.searchDirectory('decisions', searchLower, results);
 
+    // Search journal directory
+    await this.searchDirectory('journal', searchLower, results);
+
     return results;
   }
 

@@ -306,6 +306,7 @@ interface MemoryTarget {
 
 function classifyMemoryTarget(text: string): MemoryTarget {
   const lower = text.toLowerCase();
+  const today = new Date().toISOString().split('T')[0];
 
   // Check for preference-related keywords
   if (lower.includes('prefer') || lower.includes('like') || lower.includes('don\'t like') ||
@@ -314,7 +315,7 @@ function classifyMemoryTarget(text: string): MemoryTarget {
     return {
       file: 'preferences.md',
       label: 'preferences',
-      formatted: `- ${text}`,
+      formatted: `- ${text} (${today})`,
     };
   }
 
@@ -325,17 +326,41 @@ function classifyMemoryTarget(text: string): MemoryTarget {
     return {
       file: 'learnings.md',
       label: 'learnings',
-      formatted: `- ${text}`,
+      formatted: `- ${text} (${today})`,
+    };
+  }
+
+  // Check for decision-related keywords
+  if (lower.includes('decided') || lower.includes('decision') || lower.includes('chose') ||
+      lower.includes('going with') || lower.includes('we\'ll use') || lower.includes('settled on')) {
+    const slug = text.substring(0, 40).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/-+$/, '');
+    return {
+      file: `decisions/${today}-${slug}.md`,
+      label: 'decisions',
+      formatted: `# Decision: ${text}\n\n**Date:** ${today}\n**Status:** Decided\n\n## Decision\n${text}`,
     };
   }
 
   // Check for people-related keywords
   if (lower.includes('meeting with') || lower.includes('talked to') || lower.includes('spoke with') ||
-      lower.includes('email from') || lower.includes('call with')) {
+      lower.includes('email from') || lower.includes('call with') || lower.includes(' is my ') ||
+      lower.includes(' works at') || lower.includes(' their number') || lower.includes(' their email')) {
+    // Extract name heuristic: first capitalized word(s) after relational keyword
     return {
-      file: 'long-term.md',
-      label: 'long-term memory',
-      formatted: `- ${text}`,
+      file: 'people/_index.md',
+      label: 'people',
+      formatted: `- ${text} (${today})`,
+    };
+  }
+
+  // Check for project-related keywords
+  if (lower.includes('project') || lower.includes('working on') || lower.includes('building') ||
+      lower.includes('shipping') || lower.includes('launched') || lower.includes('repo') ||
+      lower.includes('codebase') || lower.includes('deploy')) {
+    return {
+      file: 'projects/_index.md',
+      label: 'projects',
+      formatted: `- ${text} (${today})`,
     };
   }
 
@@ -343,6 +368,6 @@ function classifyMemoryTarget(text: string): MemoryTarget {
   return {
     file: 'long-term.md',
     label: 'long-term memory',
-    formatted: `- ${text}`,
+    formatted: `- ${text} (${today})`,
   };
 }

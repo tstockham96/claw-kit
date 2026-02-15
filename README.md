@@ -32,7 +32,7 @@ If you liked what OpenClaw was going for but didn't trust running it, this is fo
 ## Quick Start
 
 ```bash
-git clone <this-repo> ~/Desktop/claw-kit
+git clone https://github.com/tstockham96/claw-kit.git ~/Desktop/claw-kit
 cd ~/Desktop/claw-kit
 ./setup.sh
 ```
@@ -82,6 +82,8 @@ memory/
 ```
 
 Every file is human-readable and editable. You can version control your memory with git.
+
+**What's tracked by git:** Template files (`identity.md`, `user.md`, `long-term.md`, `preferences.md`, `learnings.md`, index files). **What stays local:** Daily journals, individual people files, project files, and decision files are gitignored so your personal data doesn't get pushed.
 
 ## Telegram Bridge (Optional)
 

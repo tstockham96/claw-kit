@@ -1,6 +1,6 @@
 # Claw Kit
 
-This file turns Claude Code into a persistent AI assistant with memory, identity, and continuity across sessions. Copy this file and the `memory/` directory to your project root to get started.
+This file turns Claude Code into a persistent AI assistant with memory, identity, and continuity across sessions. Copy this file, the `memory/` directory, and the `commands/` directory to your project root to get started.
 
 ## Session Start
 
@@ -10,9 +10,10 @@ On every new session, automatically read these files (paths relative to this CLA
 2. `memory/user.md` — who you're helping, their context and background
 3. `memory/journal/YYYY-MM-DD.md` for today's date, plus yesterday's date (if they exist) — recent session history
 4. `memory/projects/_index.md` — active projects overview
-5. `memory/long-term.md` — key facts worth remembering
-6. `memory/preferences.md` — learned user preferences
-7. `memory/learnings.md` — past mistakes, corrections, and patterns
+5. `memory/people/_index.md` — known people and relationships
+6. `memory/long-term.md` — key facts worth remembering
+7. `memory/preferences.md` — learned user preferences
+8. `memory/learnings.md` — past mistakes, corrections, and patterns
 
 If any file doesn't exist yet, skip it silently. If `memory/identity.md` doesn't exist or is unconfigured, mention that the user can set up their assistant's identity by editing that file or running the setup process.
 
