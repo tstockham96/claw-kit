@@ -137,6 +137,14 @@ export function registerHandlers(bot: Telegraf, config: Config): void {
         sections.push(`*People:* ${lineCount} indexed`);
       }
 
+      // Include search index stats if available
+      const searchStats = claude.getSearchStats();
+      if (searchStats) {
+        sections.push(`\n*Search Index:* ${searchStats.totalChunks} chunks across ${searchStats.totalFiles} files`);
+      } else {
+        sections.push(`\n*Search Index:* Not available (run \`claw-search index\` to build)`);
+      }
+
       if (sections.length === 0) {
         await ctx.reply('No memory files found yet. Start chatting and use /remember to build up my memory!');
       } else {
@@ -250,21 +258,32 @@ export function registerHandlers(bot: Telegraf, config: Config): void {
     await ctx.sendChatAction('typing');
 
     try {
-      // Load memory and conversation context
-      const [memoryContext, history] = await Promise.all([
-        memory.loadContext(),
+      // Load context: use core context (search-enhanced) if search is available,
+      // otherwise fall back to loading all memory files
+      const searchAvailable = claude.isSearchAvailable();
+
+      const [context, history] = await Promise.all([
+        searchAvailable ? memory.loadCoreContext() : memory.loadContext(),
         conversations.getContext(chatId),
       ]);
 
-      // Get response from Claude
-      const response = await claude.chat(userMessage, memoryContext, history);
+      // Get response from Claude (search happens inside ClaudeService)
+      const response = await claude.chat(userMessage, context, history);
 
-      // Store the exchange
+      // Store the exchange in conversation history
       await conversations.addMessage(chatId, 'user', userMessage);
       await conversations.addMessage(chatId, 'assistant', response);
 
       // Send response
       await sendLongMessage(ctx, response);
+
+      // Log session entries for search indexing (non-blocking)
+      memory.logSessionEntry('user', userMessage, 'telegram').catch(err => {
+        console.error('Error logging user session entry:', err);
+      });
+      memory.logSessionEntry('assistant', response, 'telegram').catch(err => {
+        console.error('Error logging assistant session entry:', err);
+      });
 
       // Journal significant interactions (longer exchanges, not just greetings)
       if (userMessage.length > 50 || response.length > 200) {

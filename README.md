@@ -21,13 +21,17 @@ If you liked what OpenClaw was going for but didn't trust running it, this is fo
 ## Features
 
 - **Persistent Identity** — Name, personality, voice, and boundaries that carry across sessions
+- **Semantic Memory Search** — BM25 full-text search over chunked memory files. Ask about past decisions, people, or preferences and the AI finds relevant context automatically
+- **Automatic Memory** — The AI proactively updates memory when it notices preferences, corrections, decisions, or new people. No need to manually `/remember` everything
 - **Long-Term Memory** — Facts, preferences, learnings, and corrections that accumulate over time
 - **Daily Journals** — Automatic session logs so the AI remembers what you worked on
+- **Session Transcripts** — Conversations are logged and searchable across sessions
 - **People & Projects** — Track relationships and project state
 - **Decision Log** — Record decisions with rationale for future reference
+- **Citations** — When the AI references memory, it includes `(Source: file#line)` so you can verify
 - **Slash Commands** — `/remember`, `/status`, `/reflect`, `/briefing`, `/forget`
 - **Telegram Bridge** — Optional: chat with your AI over Telegram using the official Bot API
-- **Fully Auditable** — Everything is plaintext markdown. No databases, no binaries, no surprises.
+- **Fully Auditable** — Markdown is the source of truth. The search index is a rebuildable cache. No opaque databases, no surprises.
 
 ## Quick Start
 
@@ -60,7 +64,7 @@ claude                  # Start Claude Code
 
 ## Memory Files
 
-All stored in `kit/memory/` as markdown:
+All stored in `kit/memory/` as markdown (the source of truth):
 
 ```
 memory/
@@ -71,14 +75,17 @@ memory/
 ├── learnings.md         ← Mistakes & corrections
 ├── journal/             ← Daily session logs
 │   └── 2026-02-15.md
+├── sessions/            ← Conversation transcripts (auto-logged)
+│   └── 2026-02-15.jsonl
 ├── people/              ← Relationship context
 │   ├── _index.md
 │   └── alice.md
 ├── projects/            ← Project state
 │   ├── _index.md
 │   └── my-app.md
-└── decisions/           ← Decision log
-    └── 2026-02-15-chose-postgres.md
+├── decisions/           ← Decision log
+│   └── 2026-02-15-chose-postgres.md
+└── .search.db           ← Search index (rebuildable, gitignored)
 ```
 
 Every file is human-readable and editable. You can version control your memory with git.
@@ -121,7 +128,7 @@ The whole point of Claw Kit is that you can trust what's running on your machine
 |---|---|---|
 | **Runtime** | Nothing runs unless you start it | Always-on gateway daemon |
 | **Messaging** | Official Telegram Bot API | Unofficial WhatsApp library (Baileys) that hijacks your personal WhatsApp session |
-| **Memory storage** | Plaintext markdown — open in any text editor | Opaque SQLite database |
+| **Memory storage** | Plaintext markdown (source of truth) + rebuildable SQLite search index | Opaque SQLite database (single point of failure) |
 | **Authentication** | Telegram bot token (separate identity) + user allowlisting | Your personal WhatsApp session token — if compromised, attacker has your WhatsApp |
 | **Code trust** | Every file is readable, no compiled/obfuscated code | VirusTotal flags on skill files |
 | **Data portability** | Copy your `memory/` folder anywhere, version control with git | Locked in SQLite, requires migration tooling |
@@ -139,11 +146,23 @@ Copy any template to `kit/memory/identity.md` and customize.
 
 ## How It Works
 
-1. `kit/CLAUDE.md` tells Claude Code to read memory files on session start
-2. Claude loads your identity, preferences, recent journals, and project state
-3. As you work, Claude updates memory files (journals, learnings, preferences)
-4. Slash commands let you explicitly manage memory (`/remember`, `/forget`, `/reflect`)
-5. The Telegram bridge reads the same memory files, so your AI knows you across interfaces
+1. `kit/CLAUDE.md` tells Claude Code to read identity + user files and index memory on session start
+2. When you ask about something that might be in memory, Claude **searches** for relevant chunks (not loading entire files)
+3. As you work, Claude **automatically updates** memory files — preferences, corrections, decisions, new people
+4. Slash commands give you explicit control (`/remember`, `/forget`, `/reflect`, `/briefing`)
+5. The search index (SQLite + FTS5) is a **rebuildable cache** — delete it anytime, rebuild from markdown with `claw-search index`
+6. The Telegram bridge searches the same index, so your AI knows you across interfaces
+7. Session transcripts are logged and indexed for cross-session recall
+
+### Search Architecture
+
+```
+Markdown files (source of truth) → Chunker → SQLite FTS5 index (rebuildable cache)
+                                                    ↓
+                          Claude Code / Telegram → Search → Relevant chunks → Response
+```
+
+The key difference from OpenClaw: their SQLite **is** the database. If it corrupts, memories are lost. Our SQLite is a **search index over markdown** — delete it, rebuild it from the readable files anytime.
 
 ## Requirements
 

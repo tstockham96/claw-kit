@@ -4,6 +4,15 @@ dist/
 *.log
 conversations/
 
+# Search index (rebuildable from markdown source files)
+kit/memory/.search.db
+kit/memory/.search.db-wal
+kit/memory/.search.db-shm
+
+# Session transcripts (personal data)
+kit/memory/sessions/
+!kit/memory/sessions/.gitkeep
+
 # Keep memory templates but ignore personal data
 kit/memory/journal/*.md
 !kit/memory/journal/.gitkeep
@@ -13,3 +22,6 @@ kit/memory/projects/*.md
 !kit/memory/projects/_index.md
 kit/memory/decisions/*.md
 !kit/memory/decisions/.gitkeep
+
+# Test results
+test-results/

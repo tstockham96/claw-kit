@@ -1,7 +1,7 @@
-import { readFile, writeFile, readdir, mkdir } from 'fs/promises';
+import { readFile, writeFile, readdir, mkdir, appendFile } from 'fs/promises';
 import { existsSync } from 'fs';
 import { join, resolve } from 'path';
-import { MemoryContext } from '../types';
+import { MemoryContext, CoreContext } from '../types';
 
 export class MemoryService {
   private basePath: string;
@@ -49,6 +49,43 @@ export class MemoryService {
     ]);
 
     return { identity, user, longTerm, preferences, learnings, todayJournal, yesterdayJournal, projectsIndex, peopleIndex };
+  }
+
+  /**
+   * Load only the core context files (identity, user, today's journal).
+   * The rest of the context comes from the search engine.
+   */
+  async loadCoreContext(): Promise<CoreContext> {
+    const today = this.getDateStr();
+    const [identity, user, todayJournal] = await Promise.all([
+      this.safeRead(join(this.basePath, 'identity.md')),
+      this.safeRead(join(this.basePath, 'user.md')),
+      this.safeRead(join(this.basePath, 'journal', `${today}.md`)),
+    ]);
+    return { identity, user, todayJournal };
+  }
+
+  /**
+   * Log a session entry (user or assistant message) for search indexing.
+   * Stored as JSONL in the sessions directory under the memory path.
+   */
+  async logSessionEntry(role: string, content: string, source: string = 'telegram'): Promise<void> {
+    const today = this.getDateStr();
+    const sessionsDir = join(this.basePath, 'sessions');
+    if (!existsSync(sessionsDir)) {
+      await mkdir(sessionsDir, { recursive: true });
+    }
+
+    const sessionFile = join(sessionsDir, `${today}.jsonl`);
+    const entry = JSON.stringify({
+      timestamp: Date.now(),
+      date: new Date().toISOString(),
+      role,
+      content: content.substring(0, 2000), // cap stored content
+      source,
+    });
+
+    await appendFile(sessionFile, entry + '\n', 'utf-8');
   }
 
   async appendToJournal(entry: string): Promise<void> {

@@ -33,3 +33,9 @@ export interface MemoryContext {
   projectsIndex: string;
   peopleIndex: string;
 }
+
+export interface CoreContext {
+  identity: string;
+  user: string;
+  todayJournal: string;
+}
