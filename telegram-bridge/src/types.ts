@@ -57,3 +57,6 @@ export interface AgentProgressEvent {
   /** Brief human-readable description of what's happening */
   summary: string;
 }
+
+/** Callback for streaming text chunks as they arrive */
+export type StreamTextCallback = (chunk: string) => void;

@@ -46,7 +46,7 @@ async function main() {
   });
 
   // Start bot
-  const bot = setupBot(config);
+  const bot = await setupBot(config);
 
   // Graceful shutdown
   const shutdown = () => {
