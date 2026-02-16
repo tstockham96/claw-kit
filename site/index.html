@@ -8,11 +8,23 @@
   <meta name="theme-color" content="#0a0a0a">
   <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com;">
 
+  <!-- Favicon -->
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+
   <!-- Open Graph -->
   <meta property="og:title" content="Claw Kit — Persistent Memory for Claude Code">
   <meta property="og:description" content="Safe. Auditable. Yours. Persistent memory built on plaintext markdown.">
   <meta property="og:type" content="website">
-  <meta property="og:url" content="https://github.com/tstockham96/claw-kit">
+  <meta property="og:url" content="https://claw-kit.vercel.app">
+  <meta property="og:image" content="https://claw-kit.vercel.app/og-image.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Claw Kit — Persistent Memory for Claude Code">
+  <meta name="twitter:description" content="Safe. Auditable. Yours. Persistent memory built on plaintext markdown.">
+  <meta name="twitter:image" content="https://claw-kit.vercel.app/og-image.png">
 
   <!-- Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -67,6 +79,23 @@
 
     code, pre, .font-mono {
       font-family: 'JetBrains Mono', monospace;
+    }
+
+    /* Cursor glow — faint orange spotlight that follows the mouse */
+    .cursor-glow {
+      position: fixed;
+      width: 600px;
+      height: 600px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(232, 151, 108, 0.06) 0%, rgba(232, 151, 108, 0.02) 30%, transparent 70%);
+      pointer-events: none;
+      z-index: 0;
+      transform: translate(-50%, -50%);
+      transition: opacity 0.3s ease;
+      opacity: 0;
+    }
+    .cursor-glow.visible {
+      opacity: 1;
     }
 
     /* Glow effect behind hero text */
@@ -287,6 +316,7 @@
 </head>
 
 <body class="min-h-screen">
+  <div class="cursor-glow" id="cursor-glow"></div>
 
   <!-- Navigation -->
   <nav class="fixed top-0 w-full z-50 bg-surface-0/80 border-b border-surface-3/50">
@@ -718,6 +748,24 @@ Clone https://github.com/tstockham96/claw-kit.git to ~/Desktop/claw-kit, then ru
 
     document.querySelectorAll('.fade-in').forEach((el) => {
       observer.observe(el);
+    });
+
+    // Cursor glow — faint orange spotlight following the mouse
+    const glow = document.getElementById('cursor-glow');
+    let glowVisible = false;
+    document.addEventListener('mousemove', (e) => {
+      if (!glowVisible) {
+        glow.classList.add('visible');
+        glowVisible = true;
+      }
+      requestAnimationFrame(() => {
+        glow.style.left = e.clientX + 'px';
+        glow.style.top = e.clientY + 'px';
+      });
+    });
+    document.addEventListener('mouseleave', () => {
+      glow.classList.remove('visible');
+      glowVisible = false;
     });
   </script>
 
