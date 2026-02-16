@@ -5,13 +5,16 @@ import { join, relative, resolve as pathResolve } from 'path';
 import { glob } from 'glob';
 import { watch } from 'chokidar';
 import { chunkMarkdown } from './chunker.js';
-import type { IndexStats } from './types.js';
+import { createVectorsTable, hasVectorsTable, getVectorCount } from './db.js';
+import { isAvailable as embeddingsAvailable, embedBatch, serializeEmbedding } from './embeddings.js';
+import type { IndexStats, IndexOptions } from './types.js';
 
 /**
  * Index all .md files in the memory directory.
  * Only re-indexes files that have changed (based on content hash).
+ * When opts.embeddings is true, also generates vector embeddings for each chunk.
  */
-export function indexMemory(db: Database.Database, memoryPath: string): { indexed: number; skipped: number; removed: number } {
+export async function indexMemory(db: Database.Database, memoryPath: string, opts: IndexOptions = {}): Promise<{ indexed: number; skipped: number; removed: number; embedded?: number }> {
   const absMemoryPath = pathResolve(memoryPath);
   const mdFiles = glob.sync('**/*.md', {
     cwd: absMemoryPath,
@@ -71,7 +74,13 @@ export function indexMemory(db: Database.Database, memoryPath: string): { indexe
     }
   }
 
-  return { indexed, skipped, removed };
+  // Generate embeddings if requested
+  let embedded: number | undefined;
+  if (opts.embeddings) {
+    embedded = await generateEmbeddings(db);
+  }
+
+  return { indexed, skipped, removed, embedded };
 }
 
 /**
@@ -89,15 +98,19 @@ export function indexSession(db: Database.Database, sessionPath: string, content
 /**
  * Drop all chunks and reindex everything.
  */
-export function reindexAll(db: Database.Database, memoryPath: string): { indexed: number } {
+export async function reindexAll(db: Database.Database, memoryPath: string, opts: IndexOptions = {}): Promise<{ indexed: number; embedded?: number }> {
   // Clear all data
   db.exec(`DELETE FROM chunks`);
   db.exec(`DELETE FROM files`);
+  // Clear vectors if table exists
+  if (hasVectorsTable(db)) {
+    db.exec(`DELETE FROM vectors`);
+  }
   // Rebuild the FTS index
   db.exec(`INSERT INTO chunks_fts(chunks_fts) VALUES ('rebuild')`);
 
-  const result = indexMemory(db, memoryPath);
-  return { indexed: result.indexed };
+  const result = await indexMemory(db, memoryPath, opts);
+  return { indexed: result.indexed, embedded: result.embedded };
 }
 
 /**
@@ -121,11 +134,14 @@ export function getStats(db: Database.Database, dbPath: string): IndexStats {
     // db file may not exist yet
   }
 
+  const vectorChunks = getVectorCount(db);
+
   return {
     totalFiles,
     totalChunks,
     memoryChunks,
     sessionChunks,
+    vectorChunks,
     lastIndexed,
     dbSizeBytes,
   };
@@ -188,6 +204,74 @@ export function watchMemory(db: Database.Database, memoryPath: string): ReturnTy
 
   console.log(`Watching ${absMemoryPath} for changes...`);
   return watcher;
+}
+
+/**
+ * Generate embeddings for all chunks that don't already have them.
+ * Uses hash-based dedup to skip chunks whose content hasn't changed.
+ * Shows progress during generation since it can be slow.
+ */
+export async function generateEmbeddings(db: Database.Database): Promise<number> {
+  if (!embeddingsAvailable()) {
+    console.error('Warning: @huggingface/transformers is not installed. Skipping embedding generation.');
+    console.error('Install it with: npm install @huggingface/transformers');
+    return 0;
+  }
+
+  // Ensure the vectors table exists
+  createVectorsTable(db);
+
+  // Find chunks that don't have embeddings yet
+  const chunksWithoutVectors = db.prepare(`
+    SELECT c.id, c.text, c.hash
+    FROM chunks c
+    LEFT JOIN vectors v ON c.id = v.chunk_id
+    WHERE v.chunk_id IS NULL
+  `).all() as Array<{ id: number; text: string; hash: string }>;
+
+  if (chunksWithoutVectors.length === 0) {
+    console.log('All chunks already have embeddings.');
+    return 0;
+  }
+
+  console.log(`Generating embeddings for ${chunksWithoutVectors.length} chunks...`);
+
+  const BATCH_SIZE = 32;
+  let embedded = 0;
+
+  const insertVector = db.prepare(`
+    INSERT OR REPLACE INTO vectors (chunk_id, embedding) VALUES (?, ?)
+  `);
+
+  for (let i = 0; i < chunksWithoutVectors.length; i += BATCH_SIZE) {
+    const batch = chunksWithoutVectors.slice(i, i + BATCH_SIZE);
+    const texts = batch.map(c => c.text);
+
+    try {
+      const embeddings = await embedBatch(texts);
+
+      const insertBatch = db.transaction(() => {
+        for (let j = 0; j < batch.length; j++) {
+          insertVector.run(batch[j].id, serializeEmbedding(embeddings[j]));
+        }
+      });
+      insertBatch();
+
+      embedded += batch.length;
+
+      // Progress feedback
+      const progress = Math.min(100, Math.round(((i + batch.length) / chunksWithoutVectors.length) * 100));
+      process.stdout.write(`\r  Progress: ${embedded}/${chunksWithoutVectors.length} chunks (${progress}%)`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`\nWarning: Failed to embed batch starting at chunk ${batch[0].id}: ${message}`);
+    }
+  }
+
+  console.log(); // newline after progress
+  console.log(`Embedded ${embedded} chunks.`);
+
+  return embedded;
 }
 
 // --- Internal helpers ---

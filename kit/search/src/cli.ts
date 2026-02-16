@@ -3,8 +3,8 @@
 import { resolve, join, relative } from 'path';
 import { readFileSync } from 'fs';
 import { createDatabase } from './db.js';
-import { indexMemory, indexSession, reindexAll, watchMemory, getStats } from './indexer.js';
-import { search, getFileChunk } from './search.js';
+import { indexMemory, indexSession, reindexAll, watchMemory, getStats, generateEmbeddings } from './indexer.js';
+import { search, hybridSearch, getFileChunk } from './search.js';
 import { logSession } from './sessions.js';
 
 // --- Argument parsing ---
@@ -56,48 +56,60 @@ function formatBytes(bytes: number): string {
 
 // --- Commands ---
 
-function cmdIndex(flags: Record<string, string>): void {
+async function cmdIndex(flags: Record<string, string>): Promise<void> {
   const memoryPath = getMemoryPath(flags);
   const dbPath = getDbPath(flags, memoryPath);
+  const withEmbeddings = flags['embeddings'] === 'true';
 
   console.log(`Indexing memory files from: ${memoryPath}`);
   console.log(`Database: ${dbPath}`);
+  if (withEmbeddings) {
+    console.log('Embeddings: enabled (will generate vector embeddings)');
+  }
 
   const db = createDatabase(dbPath);
 
   const forceReindex = flags['reindex'] === 'true';
-  let result: { indexed: number; skipped?: number; removed?: number };
+  let result: { indexed: number; skipped?: number; removed?: number; embedded?: number };
 
   if (forceReindex) {
-    result = reindexAll(db, memoryPath);
+    result = await reindexAll(db, memoryPath, { embeddings: withEmbeddings });
     console.log(`\nReindexed ${result.indexed} files (full rebuild).`);
   } else {
-    result = indexMemory(db, memoryPath);
+    result = await indexMemory(db, memoryPath, { embeddings: withEmbeddings });
     console.log(`\nIndexed: ${result.indexed}, Skipped (unchanged): ${result.skipped}, Removed: ${result.removed}`);
+  }
+
+  if (result.embedded !== undefined) {
+    console.log(`Embeddings: ${result.embedded} chunks embedded.`);
   }
 
   const stats = getStats(db, dbPath);
   console.log(`Total: ${stats.totalChunks} chunks from ${stats.totalFiles} files.`);
+  if (stats.vectorChunks > 0) {
+    console.log(`Vectors: ${stats.vectorChunks} chunks have embeddings.`);
+  }
 
   db.close();
 }
 
-function cmdSearch(positional: string[], flags: Record<string, string>): void {
+async function cmdSearch(positional: string[], flags: Record<string, string>): Promise<void> {
   const query = positional.join(' ');
   if (!query) {
-    console.error('Usage: claw-search search <query> [--limit N] [--source memory|sessions|all]');
+    console.error('Usage: claw-search search <query> [--limit N] [--source memory|sessions|all] [--hybrid]');
     process.exit(1);
   }
 
   const memoryPath = getMemoryPath(flags);
   const dbPath = getDbPath(flags, memoryPath);
+  const useHybrid = flags['hybrid'] === 'true';
   const db = createDatabase(dbPath);
 
   // Auto-index if database is empty
   const stats = getStats(db, dbPath);
   if (stats.totalChunks === 0) {
     console.log('Index is empty, building index first...\n');
-    indexMemory(db, memoryPath);
+    await indexMemory(db, memoryPath);
   }
 
   const limit = flags['limit'] ? parseInt(flags['limit'], 10) : 10;
@@ -105,10 +117,22 @@ function cmdSearch(positional: string[], flags: Record<string, string>): void {
   const source = sourceFlag ?? 'all';
 
   const startTime = performance.now();
-  const results = search(db, query, { maxResults: limit, source });
+
+  let results: import('./types.js').SearchResult[];
+  let searchMode: string;
+
+  if (useHybrid) {
+    const hybridResult = await hybridSearch(db, query, { maxResults: limit, source });
+    results = hybridResult.results;
+    searchMode = hybridResult.mode === 'hybrid' ? '(hybrid)' : '(BM25)';
+  } else {
+    results = search(db, query, { maxResults: limit, source });
+    searchMode = '(BM25)';
+  }
+
   const elapsed = (performance.now() - startTime).toFixed(0);
 
-  console.log(`## Results for: "${query}"\n`);
+  console.log(`## Results for: "${query}" ${searchMode}\n`);
 
   if (results.length === 0) {
     console.log('No results found.\n');
@@ -131,7 +155,10 @@ function cmdSearch(positional: string[], flags: Record<string, string>): void {
   }
 
   const updatedStats = getStats(db, dbPath);
-  console.log(`Found ${results.length} results in ${elapsed}ms. Index: ${updatedStats.totalChunks} chunks from ${updatedStats.totalFiles} files.`);
+  console.log(`Found ${results.length} results in ${elapsed}ms ${searchMode}. Index: ${updatedStats.totalChunks} chunks from ${updatedStats.totalFiles} files.`);
+  if (updatedStats.vectorChunks > 0) {
+    console.log(`Vectors: ${updatedStats.vectorChunks} chunks have embeddings.`);
+  }
 
   db.close();
 }
@@ -175,20 +202,21 @@ function cmdStatus(flags: Record<string, string>): void {
   console.log(`- Memory chunks: ${stats.memoryChunks}`);
   console.log(`- Session chunks: ${stats.sessionChunks}`);
   console.log(`- Total chunks: ${stats.totalChunks}`);
+  console.log(`- Vector embeddings: ${stats.vectorChunks}${stats.vectorChunks > 0 && stats.totalChunks > 0 ? ` (${Math.round(stats.vectorChunks / stats.totalChunks * 100)}% coverage)` : ''}`);
   console.log(`- Database size: ${formatBytes(stats.dbSizeBytes)}`);
   console.log(`- Last indexed: ${stats.lastIndexed}`);
 
   db.close();
 }
 
-function cmdWatch(flags: Record<string, string>): void {
+async function cmdWatch(flags: Record<string, string>): Promise<void> {
   const memoryPath = getMemoryPath(flags);
   const dbPath = getDbPath(flags, memoryPath);
   const db = createDatabase(dbPath);
 
   // Initial index
   console.log('Building initial index...');
-  const result = indexMemory(db, memoryPath);
+  const result = await indexMemory(db, memoryPath);
   console.log(`Indexed ${result.indexed} files (${result.skipped} unchanged).\n`);
 
   // Watch for changes
@@ -207,7 +235,7 @@ function cmdWatch(flags: Record<string, string>): void {
   process.on('SIGTERM', shutdown);
 }
 
-function cmdLog(positional: string[], flags: Record<string, string>): void {
+async function cmdLog(positional: string[], flags: Record<string, string>): Promise<void> {
   const message = positional.join(' ');
   if (!message) {
     console.error('Usage: claw-search log <message> [--session-id ID]');
@@ -241,11 +269,12 @@ function printHelp(): void {
 claw-search - Semantic search for Claw Kit memory files
 
 Commands:
-  index    [--memory-path PATH] [--db-path PATH] [--reindex]
-           Index all memory files.
+  index    [--memory-path PATH] [--db-path PATH] [--reindex] [--embeddings]
+           Index all memory files. Use --embeddings to generate vector embeddings.
 
-  search   <query> [--limit N] [--source memory|sessions|all] [--memory-path PATH] [--db-path PATH]
+  search   <query> [--limit N] [--source memory|sessions|all] [--hybrid] [--memory-path PATH] [--db-path PATH]
            Search memory. Returns ranked results with snippets.
+           Use --hybrid for combined BM25 + vector search (requires embeddings).
 
   get      <file-path> [--from LINE] [--lines COUNT]
            Get content from a specific indexed memory file.
@@ -264,20 +293,26 @@ Commands:
 Defaults:
   --memory-path  ../memory (relative to this script)
   --db-path      <memory-path>/.search.db
+
+Embeddings (optional):
+  Install @huggingface/transformers for vector search support:
+    npm install @huggingface/transformers
+  Then index with: claw-search index --embeddings
+  And search with: claw-search search "query" --hybrid
 `);
 }
 
 // --- Main ---
 
-function main(): void {
+async function main(): Promise<void> {
   const { command, positional, flags } = parseArgs(process.argv);
 
   switch (command) {
     case 'index':
-      cmdIndex(flags);
+      await cmdIndex(flags);
       break;
     case 'search':
-      cmdSearch(positional, flags);
+      await cmdSearch(positional, flags);
       break;
     case 'get':
       cmdGet(positional, flags);
@@ -286,10 +321,10 @@ function main(): void {
       cmdStatus(flags);
       break;
     case 'watch':
-      cmdWatch(flags);
+      await cmdWatch(flags);
       break;
     case 'log':
-      cmdLog(positional, flags);
+      await cmdLog(positional, flags);
       break;
     case 'help':
     default:

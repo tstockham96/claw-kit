@@ -70,3 +70,35 @@ export function createDatabase(dbPath: string): Database.Database {
 
   return db;
 }
+
+/**
+ * Create the vectors table for storing embeddings.
+ * Only called when embeddings are enabled — keeps the schema additive.
+ */
+export function createVectorsTable(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS vectors (
+      chunk_id INTEGER PRIMARY KEY REFERENCES chunks(id) ON DELETE CASCADE,
+      embedding BLOB NOT NULL
+    )
+  `);
+}
+
+/**
+ * Check whether the vectors table exists in the database.
+ */
+export function hasVectorsTable(db: Database.Database): boolean {
+  const row = db.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='vectors'`
+  ).get() as { name: string } | undefined;
+  return !!row;
+}
+
+/**
+ * Get the count of stored vectors.
+ */
+export function getVectorCount(db: Database.Database): number {
+  if (!hasVectorsTable(db)) return 0;
+  const row = db.prepare(`SELECT COUNT(*) as count FROM vectors`).get() as { count: number };
+  return row.count;
+}
