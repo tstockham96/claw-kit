@@ -43,6 +43,8 @@ cd ~/Desktop/claw-kit
 
 The setup script asks for your name, timezone, role, and AI personality preferences, then scaffolds everything. Takes about 2 minutes.
 
+> **Windows users:** `setup.sh` requires macOS, Linux, or [WSL](https://learn.microsoft.com/en-us/windows/wsl/install). Most Claude Code users on Windows already have WSL — just run the commands from there.
+
 After setup:
 
 ```bash
