@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { Config, MemoryContext, CoreContext, ConversationMessage, StreamTextCallback } from '../types';
+import { Config, MemoryContext, CoreContext, ConversationMessage } from '../types';
 import { SearchService, TelegramSearchResult } from './search';
 
 export class ClaudeService {
@@ -23,7 +23,6 @@ export class ClaudeService {
     userMessage: string,
     context: CoreContext | MemoryContext,
     conversationHistory: ConversationMessage[],
-    onText?: StreamTextCallback,
   ): Promise<string> {
     // Search for relevant context based on the user's message
     const searchResults = this.searchService.search(userMessage, 8);
@@ -40,26 +39,6 @@ export class ClaudeService {
       { role: 'user' as const, content: userMessage },
     ];
 
-    // Use streaming API when a text callback is provided
-    if (onText) {
-      const stream = this.client.messages.stream({
-        model: this.config.chatModel,
-        max_tokens: 4096,
-        system: systemPrompt,
-        messages,
-      });
-
-      const fullParts: string[] = [];
-      stream.on('text', (text) => {
-        fullParts.push(text);
-        onText(text);
-      });
-
-      await stream.finalMessage();
-      return fullParts.join('');
-    }
-
-    // Non-streaming fallback
     const response = await this.client.messages.create({
       model: this.config.chatModel,
       max_tokens: 4096,
