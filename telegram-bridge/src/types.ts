@@ -8,6 +8,14 @@ export interface Config {
   allowedUsers: number[];
   groupChatEnabled: boolean;
   port: number;
+  /** Enable Claude Agent SDK mode for full tool access (Bash, Read, Write, etc.) */
+  agentMode: boolean;
+  /** Working directory for Claude Code when in agent mode (default: parent of telegram-bridge) */
+  agentCwd: string;
+  /** Max agentic turns per message in agent mode (default: 25) */
+  agentMaxTurns: number;
+  /** Allowed tools in agent mode (default: safe set) */
+  agentAllowedTools: string[];
 }
 
 export interface ConversationMessage {

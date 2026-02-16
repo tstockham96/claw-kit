@@ -2,6 +2,7 @@ import { Telegraf, Context } from 'telegraf';
 import { message } from 'telegraf/filters';
 import { Config } from '../types';
 import { ClaudeService } from '../services/claude';
+import { AgentService } from '../services/agent';
 import { MemoryService } from '../services/memory';
 import { ConversationService } from '../services/conversation';
 import { shouldRespondInGroup } from './groups';
@@ -65,8 +66,22 @@ function trackGroupMessage(chatId: number, senderName: string, text: string): vo
 
 export function registerHandlers(bot: Telegraf, config: Config): void {
   const claude = new ClaudeService(config);
+  const agent = config.agentMode ? new AgentService(config) : null;
   const memory = new MemoryService(config.memoryPath);
   const conversations = new ConversationService(config);
+
+  // Check agent availability at startup (non-blocking)
+  if (agent) {
+    agent.isAvailable().then(available => {
+      if (available) {
+        console.log('Agent mode enabled — messages will be processed through Claude Code SDK');
+      } else {
+        console.log('Agent mode requested but SDK not available — falling back to direct API');
+      }
+    }).catch(() => {
+      console.log('Agent mode requested but SDK check failed — falling back to direct API');
+    });
+  }
 
   // /start command
   bot.start(async (ctx) => {
@@ -258,6 +273,9 @@ export function registerHandlers(bot: Telegraf, config: Config): void {
     await ctx.sendChatAction('typing');
 
     try {
+      // Determine whether to use Agent SDK or direct API
+      const useAgent = agent && await agent.isAvailable();
+
       // Load context: use core context (search-enhanced) if search is available,
       // otherwise fall back to loading all memory files
       const searchAvailable = claude.isSearchAvailable();
@@ -267,8 +285,17 @@ export function registerHandlers(bot: Telegraf, config: Config): void {
         conversations.getContext(chatId),
       ]);
 
-      // Get response from Claude (search happens inside ClaudeService)
-      const response = await claude.chat(userMessage, context, history);
+      // Get response from Claude — agent mode or direct API
+      let response: string;
+      if (useAgent) {
+        // Agent mode: full tool access via Claude Code SDK
+        // (conversation history is not passed — each agent call is stateless
+        // and relies on memory files + search for context)
+        response = await agent.chat(userMessage, context, senderName);
+      } else {
+        // Direct API mode: standard chat with conversation history
+        response = await claude.chat(userMessage, context, history);
+      }
 
       // Store the exchange in conversation history
       await conversations.addMessage(chatId, 'user', userMessage);

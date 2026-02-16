@@ -1,7 +1,10 @@
 import 'dotenv/config';
 import express from 'express';
+import { resolve } from 'path';
 import { setupBot } from './bot/setup';
 import { Config } from './types';
+
+const DEFAULT_AGENT_TOOLS = ['Read', 'Write', 'Edit', 'Glob', 'Grep', 'Bash'];
 
 function loadConfig(): Config {
   const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -22,6 +25,12 @@ function loadConfig(): Config {
       : [],
     groupChatEnabled: process.env.GROUP_CHAT_ENABLED !== 'false',
     port: parseInt(process.env.PORT || '3000', 10),
+    agentMode: process.env.AGENT_MODE === 'true',
+    agentCwd: process.env.AGENT_CWD || resolve(__dirname, '../../'),
+    agentMaxTurns: parseInt(process.env.AGENT_MAX_TURNS || '25', 10),
+    agentAllowedTools: process.env.AGENT_ALLOWED_TOOLS
+      ? process.env.AGENT_ALLOWED_TOOLS.split(',').map(t => t.trim())
+      : DEFAULT_AGENT_TOOLS,
   };
 }
 
