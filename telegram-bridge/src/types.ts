@@ -47,3 +47,13 @@ export interface CoreContext {
   user: string;
   todayJournal: string;
 }
+
+/** Progress callback fired during agent execution */
+export type AgentProgressCallback = (event: AgentProgressEvent) => void;
+
+export interface AgentProgressEvent {
+  type: 'tool_start' | 'tool_end' | 'thinking';
+  toolName?: string;
+  /** Brief human-readable description of what's happening */
+  summary: string;
+}

@@ -1,4 +1,4 @@
-import { Config, CoreContext, MemoryContext } from '../types';
+import { Config, CoreContext, MemoryContext, AgentProgressCallback } from '../types';
 import { SearchService, TelegramSearchResult } from './search';
 
 // Dangerous bash patterns to block (defense-in-depth)
@@ -68,11 +68,13 @@ export class AgentService {
 
   /**
    * Send a message through Claude Code via the Agent SDK and collect the response.
+   * Optionally fires progress callbacks as tools are used.
    */
   async chat(
     userMessage: string,
     context: CoreContext | MemoryContext,
     userName: string = 'User',
+    onProgress?: AgentProgressCallback,
   ): Promise<string> {
     const sdk = await import('@anthropic-ai/claude-agent-sdk');
     const { query } = sdk;
@@ -97,7 +99,7 @@ export class AgentService {
             append: [
               'You are responding to a Telegram message. Keep responses conversational and concise.',
               'Use Telegram-friendly formatting (bold with *text*, italic with _text_, code with `code`).',
-              'Be natural — this is a chat, not a document.',
+              'Be natural, this is a chat, not a document.',
             ].join('\n'),
           },
           permissionMode: 'default',
@@ -120,6 +122,20 @@ export class AgentService {
 
       for await (const message of stream) {
         if (message.type === 'assistant') {
+          // Fire progress for tool use blocks (tool_start)
+          if (onProgress) {
+            for (const block of message.message.content) {
+              if ('type' in block && block.type === 'tool_use') {
+                const toolBlock = block as { name?: string; input?: Record<string, unknown> };
+                onProgress({
+                  type: 'tool_start',
+                  toolName: toolBlock.name,
+                  summary: describeToolUse(toolBlock.name, toolBlock.input),
+                });
+              }
+            }
+          }
+
           for (const block of message.message.content) {
             if ('text' in block && typeof block.text === 'string') {
               textParts.push(block.text);
@@ -132,7 +148,7 @@ export class AgentService {
             return message.result;
           }
           if (message.subtype !== 'success') {
-            // Error result — return whatever text we collected, or a generic error
+            // Error result: return whatever text we collected, or a generic error
             if (textParts.length > 0) {
               return textParts.join('\n');
             }
@@ -199,5 +215,41 @@ export class AgentService {
       lines.push('');
     }
     return lines.join('\n');
+  }
+}
+
+/**
+ * Produce a short, human-readable description of a tool invocation.
+ */
+function describeToolUse(toolName?: string, input?: Record<string, unknown>): string {
+  if (!toolName) return 'Working...';
+
+  switch (toolName) {
+    case 'Bash': {
+      const cmd = typeof input?.command === 'string' ? input.command : '';
+      const short = cmd.length > 60 ? cmd.substring(0, 57) + '...' : cmd;
+      return short ? `Running: \`${short}\`` : 'Running a command';
+    }
+    case 'Read': {
+      const file = typeof input?.file_path === 'string' ? input.file_path.split('/').pop() : '';
+      return file ? `Reading ${file}` : 'Reading a file';
+    }
+    case 'Write': {
+      const file = typeof input?.file_path === 'string' ? input.file_path.split('/').pop() : '';
+      return file ? `Writing ${file}` : 'Writing a file';
+    }
+    case 'Edit': {
+      const file = typeof input?.file_path === 'string' ? input.file_path.split('/').pop() : '';
+      return file ? `Editing ${file}` : 'Editing a file';
+    }
+    case 'Glob':
+      return `Searching for files`;
+    case 'Grep': {
+      const pattern = typeof input?.pattern === 'string' ? input.pattern : '';
+      const short = pattern.length > 40 ? pattern.substring(0, 37) + '...' : pattern;
+      return short ? `Searching for "${short}"` : 'Searching code';
+    }
+    default:
+      return `Using ${toolName}`;
   }
 }

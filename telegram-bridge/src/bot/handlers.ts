@@ -285,13 +285,49 @@ export function registerHandlers(bot: Telegraf, config: Config): void {
         conversations.getContext(chatId),
       ]);
 
-      // Get response from Claude — agent mode or direct API
+      // Get response from Claude
       let response: string;
       if (useAgent) {
-        // Agent mode: full tool access via Claude Code SDK
-        // (conversation history is not passed — each agent call is stateless
-        // and relies on memory files + search for context)
-        response = await agent.chat(userMessage, context, senderName);
+        // Agent mode: send a "working on it" status message and keep typing alive
+        const statusMsg = await ctx.reply('Working on it...');
+        let lastStatusText = 'Working on it...';
+        let progressSteps: string[] = [];
+
+        // Refresh typing indicator every 4 seconds (Telegram expires it after ~5s)
+        const typingInterval = setInterval(() => {
+          ctx.sendChatAction('typing').catch(() => {});
+        }, 4000);
+
+        // Progress callback: update the status message as tools are used
+        const onProgress = async (event: import('../types').AgentProgressEvent) => {
+          if (event.type !== 'tool_start') return;
+          progressSteps.push(event.summary);
+          // Keep only the last 3 steps to avoid a wall of text
+          const recentSteps = progressSteps.slice(-3);
+          const newText = `Working on it...\n\n${recentSteps.join('\n')}`;
+          if (newText !== lastStatusText) {
+            lastStatusText = newText;
+            try {
+              await ctx.telegram.editMessageText(
+                chatId, statusMsg.message_id, undefined, newText,
+              );
+            } catch {
+              // Edit can fail if text is identical or message is too old
+            }
+          }
+        };
+
+        try {
+          response = await agent.chat(userMessage, context, senderName, onProgress);
+        } finally {
+          clearInterval(typingInterval);
+          // Delete the status message now that we have the real response
+          try {
+            await ctx.telegram.deleteMessage(chatId, statusMsg.message_id);
+          } catch {
+            // Deletion can fail if the message was already removed
+          }
+        }
       } else {
         // Direct API mode: standard chat with conversation history
         response = await claude.chat(userMessage, context, history);
@@ -301,8 +337,8 @@ export function registerHandlers(bot: Telegraf, config: Config): void {
       await conversations.addMessage(chatId, 'user', userMessage);
       await conversations.addMessage(chatId, 'assistant', response);
 
-      // Send response
-      await sendLongMessage(ctx, response);
+      // Send response (prefixed with a checkmark in agent mode to signal completion)
+      await sendLongMessage(ctx, useAgent ? `Done.\n\n${response}` : response);
 
       // Log session entries for search indexing (non-blocking)
       memory.logSessionEntry('user', userMessage, 'telegram').catch(err => {
