@@ -1,4 +1,4 @@
-import { Config, CoreContext, MemoryContext, AgentProgressCallback } from '../types';
+import { Config, CoreContext, MemoryContext, AgentProgressCallback, StreamTextCallback } from '../types';
 import { SearchService, TelegramSearchResult } from './search';
 
 // Dangerous bash patterns to block (defense-in-depth)
@@ -75,6 +75,7 @@ export class AgentService {
     context: CoreContext | MemoryContext,
     userName: string = 'User',
     onProgress?: AgentProgressCallback,
+    onText?: StreamTextCallback,
   ): Promise<string> {
     const sdk = await import('@anthropic-ai/claude-agent-sdk');
     const { query } = sdk;
@@ -139,6 +140,7 @@ export class AgentService {
           for (const block of message.message.content) {
             if ('text' in block && typeof block.text === 'string') {
               textParts.push(block.text);
+              if (onText) onText(block.text);
             }
           }
         }

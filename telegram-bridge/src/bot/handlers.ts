@@ -1,6 +1,6 @@
 import { Telegraf, Context } from 'telegraf';
 import { message } from 'telegraf/filters';
-import { Config } from '../types';
+import { Config, AgentProgressEvent } from '../types';
 import { ClaudeService } from '../services/claude';
 import { AgentService } from '../services/agent';
 import { MemoryService } from '../services/memory';
@@ -8,6 +8,8 @@ import { ConversationService } from '../services/conversation';
 import { shouldRespondInGroup } from './groups';
 
 const TELEGRAM_MAX_LENGTH = 4096;
+const STREAM_UPDATE_INTERVAL_MS = 1200; // How often to push edits to Telegram
+const STREAM_CURSOR = ' ▍'; // Blinking cursor effect while streaming
 
 // Track recent group messages for classifier context
 const groupMessageHistory = new Map<number, string[]>();
@@ -62,6 +64,152 @@ function trackGroupMessage(chatId: number, senderName: string, text: string): vo
     history.shift();
   }
   groupMessageHistory.set(chatId, history);
+}
+
+/**
+ * Manages a streaming Telegram message that updates as text arrives.
+ * Accumulates text chunks and periodically edits the Telegram message
+ * to show the latest content, similar to the CLI streaming experience.
+ */
+class StreamingMessage {
+  private chatId: number;
+  private telegram: Context['telegram'];
+  private messageId: number | null = null;
+  private accumulated = '';
+  private lastSent = '';
+  private updateTimer: ReturnType<typeof setInterval> | null = null;
+  private typingTimer: ReturnType<typeof setInterval> | null = null;
+  private finished = false;
+  /** Agent mode status lines shown above the streaming text */
+  private statusLines: string[] = [];
+
+  constructor(chatId: number, telegram: Context['telegram']) {
+    this.chatId = chatId;
+    this.telegram = telegram;
+  }
+
+  /** Start the streaming message with an initial placeholder */
+  async start(initialText: string = '...'): Promise<void> {
+    const msg = await this.telegram.sendMessage(this.chatId, initialText);
+    this.messageId = msg.message_id;
+
+    // Keep typing indicator alive
+    this.typingTimer = setInterval(() => {
+      this.telegram.sendChatAction(this.chatId, 'typing').catch(() => {});
+    }, 4000);
+
+    // Periodically flush accumulated text to the Telegram message
+    this.updateTimer = setInterval(() => this.flush(), STREAM_UPDATE_INTERVAL_MS);
+  }
+
+  /** Append a text chunk (called from streaming callbacks) */
+  push(chunk: string): void {
+    this.accumulated += chunk;
+  }
+
+  /** Record a tool-use status line (agent mode) */
+  addStatus(line: string): void {
+    this.statusLines.push(line);
+    // Keep only the 3 most recent
+    if (this.statusLines.length > 3) {
+      this.statusLines = this.statusLines.slice(-3);
+    }
+  }
+
+  /** Flush the current accumulated text to Telegram */
+  private async flush(): Promise<void> {
+    if (!this.messageId || this.finished) return;
+
+    let displayText: string;
+    if (this.accumulated.length === 0 && this.statusLines.length > 0) {
+      // No response text yet, just show status
+      displayText = this.statusLines.join('\n');
+    } else if (this.accumulated.length === 0) {
+      return; // Nothing to show
+    } else {
+      // Show status (if any) + streamed text + cursor
+      const prefix = this.statusLines.length > 0
+        ? this.statusLines.join('\n') + '\n\n'
+        : '';
+      displayText = prefix + this.accumulated + STREAM_CURSOR;
+    }
+
+    // Telegram rejects edits with identical text
+    if (displayText === this.lastSent) return;
+
+    // Truncate to Telegram's limit
+    if (displayText.length > TELEGRAM_MAX_LENGTH) {
+      displayText = displayText.substring(0, TELEGRAM_MAX_LENGTH - 4) + '...';
+    }
+
+    try {
+      await this.telegram.editMessageText(
+        this.chatId, this.messageId, undefined, displayText,
+      );
+      this.lastSent = displayText;
+    } catch {
+      // Edit can fail if text hasn't changed or message was deleted
+    }
+  }
+
+  /**
+   * Finalize the message with the complete response text.
+   * Stops all timers and does a final edit with the full content.
+   * Returns any overflow text that didn't fit in the first message.
+   */
+  async finish(finalText: string): Promise<string | null> {
+    this.finished = true;
+    if (this.updateTimer) clearInterval(this.updateTimer);
+    if (this.typingTimer) clearInterval(this.typingTimer);
+
+    if (!this.messageId) return finalText;
+
+    // If the final text fits in one message, edit it in place
+    if (finalText.length <= TELEGRAM_MAX_LENGTH) {
+      try {
+        await this.telegram.editMessageText(
+          this.chatId, this.messageId, undefined, finalText,
+        );
+      } catch {
+        // If edit fails, send as new message
+        return finalText;
+      }
+      return null;
+    }
+
+    // Text is too long: put the first chunk in the existing message,
+    // return the rest for the caller to send as follow-up messages
+    const splitIndex = findSplitPoint(finalText, TELEGRAM_MAX_LENGTH);
+    const first = finalText.substring(0, splitIndex);
+    const rest = finalText.substring(splitIndex).trimStart();
+
+    try {
+      await this.telegram.editMessageText(
+        this.chatId, this.messageId, undefined, first,
+      );
+    } catch {
+      return finalText; // Send the whole thing as new messages
+    }
+
+    return rest.length > 0 ? rest : null;
+  }
+
+  /** Clean up timers if something goes wrong */
+  cleanup(): void {
+    this.finished = true;
+    if (this.updateTimer) clearInterval(this.updateTimer);
+    if (this.typingTimer) clearInterval(this.typingTimer);
+  }
+}
+
+/** Find a natural split point in text near the target length */
+function findSplitPoint(text: string, maxLen: number): number {
+  if (text.length <= maxLen) return text.length;
+  let idx = text.lastIndexOf('\n\n', maxLen);
+  if (idx === -1 || idx < maxLen / 2) idx = text.lastIndexOf('\n', maxLen);
+  if (idx === -1 || idx < maxLen / 2) idx = text.lastIndexOf('. ', maxLen);
+  if (idx === -1 || idx < maxLen / 2) idx = maxLen;
+  return idx;
 }
 
 export function registerHandlers(bot: Telegraf, config: Config): void {
@@ -285,60 +433,42 @@ export function registerHandlers(bot: Telegraf, config: Config): void {
         conversations.getContext(chatId),
       ]);
 
-      // Get response from Claude
+      // Set up a streaming message that updates in real time
+      const stream = new StreamingMessage(chatId, ctx.telegram);
       let response: string;
-      if (useAgent) {
-        // Agent mode: send a "working on it" status message and keep typing alive
-        const statusMsg = await ctx.reply('Working on it...');
-        let lastStatusText = 'Working on it...';
-        let progressSteps: string[] = [];
 
-        // Refresh typing indicator every 4 seconds (Telegram expires it after ~5s)
-        const typingInterval = setInterval(() => {
-          ctx.sendChatAction('typing').catch(() => {});
-        }, 4000);
+      try {
+        if (useAgent) {
+          // Agent mode: show tool activity + streaming text
+          await stream.start('Working on it...');
 
-        // Progress callback: update the status message as tools are used
-        const onProgress = async (event: import('../types').AgentProgressEvent) => {
-          if (event.type !== 'tool_start') return;
-          progressSteps.push(event.summary);
-          // Keep only the last 3 steps to avoid a wall of text
-          const recentSteps = progressSteps.slice(-3);
-          const newText = `Working on it...\n\n${recentSteps.join('\n')}`;
-          if (newText !== lastStatusText) {
-            lastStatusText = newText;
-            try {
-              await ctx.telegram.editMessageText(
-                chatId, statusMsg.message_id, undefined, newText,
-              );
-            } catch {
-              // Edit can fail if text is identical or message is too old
-            }
-          }
-        };
+          const onProgress = (event: AgentProgressEvent) => {
+            if (event.type === 'tool_start') stream.addStatus(event.summary);
+          };
+          const onText = (chunk: string) => stream.push(chunk);
 
-        try {
-          response = await agent.chat(userMessage, context, senderName, onProgress);
-        } finally {
-          clearInterval(typingInterval);
-          // Delete the status message now that we have the real response
-          try {
-            await ctx.telegram.deleteMessage(chatId, statusMsg.message_id);
-          } catch {
-            // Deletion can fail if the message was already removed
-          }
+          response = await agent.chat(userMessage, context, senderName, onProgress, onText);
+        } else {
+          // Direct API mode: stream the response text live
+          await stream.start('...');
+
+          const onText = (chunk: string) => stream.push(chunk);
+          response = await claude.chat(userMessage, context, history, onText);
         }
-      } else {
-        // Direct API mode: standard chat with conversation history
-        response = await claude.chat(userMessage, context, history);
+
+        // Finalize: replace the streaming message with the clean final text
+        const overflow = await stream.finish(response);
+        if (overflow) {
+          await sendLongMessage(ctx, overflow);
+        }
+      } catch (err) {
+        stream.cleanup();
+        throw err;
       }
 
       // Store the exchange in conversation history
       await conversations.addMessage(chatId, 'user', userMessage);
       await conversations.addMessage(chatId, 'assistant', response);
-
-      // Send response (prefixed with a checkmark in agent mode to signal completion)
-      await sendLongMessage(ctx, useAgent ? `Done.\n\n${response}` : response);
 
       // Log session entries for search indexing (non-blocking)
       memory.logSessionEntry('user', userMessage, 'telegram').catch(err => {
