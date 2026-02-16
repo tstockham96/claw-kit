@@ -14,7 +14,7 @@ export class MemoryService {
   /** Validate that a resolved path stays within the memory directory */
   private validatePath(fileName: string): string {
     const resolved = resolve(join(this.basePath, fileName));
-    if (!resolved.startsWith(this.basePath)) {
+    if (!resolved.startsWith(this.basePath + '/') && resolved !== this.basePath) {
       throw new Error(`Path traversal blocked: ${fileName}`);
     }
     return resolved;

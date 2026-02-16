@@ -146,10 +146,10 @@ cat > "$MEMORY_DIR/identity.md" << 'IDENTITY_EOF'
 IDENTITY_EOF
 
 # Safely substitute user values (escape sed delimiters in user input)
-safe_ai_name=$(printf '%s' "$ai_name" | sed 's/[&/\]/\\&/g')
-safe_personality=$(printf '%s' "$personality" | sed 's/[&/\]/\\&/g')
-safe_ai_role=$(printf '%s' "$ai_role" | sed 's/[&/\]/\\&/g')
-safe_voice=$(printf '%s' "$voice" | sed 's/[&/\]/\\&/g')
+safe_ai_name=$(printf '%s' "$ai_name" | sed 's/[&/\\]/\\&/g')
+safe_personality=$(printf '%s' "$personality" | sed 's/[&/\\]/\\&/g')
+safe_ai_role=$(printf '%s' "$ai_role" | sed 's/[&/\\]/\\&/g')
+safe_voice=$(printf '%s' "$voice" | sed 's/[&/\\]/\\&/g')
 sed -i '' "s/__AI_NAME__/$safe_ai_name/" "$MEMORY_DIR/identity.md"
 sed -i '' "s/__PERSONALITY__/$safe_personality/" "$MEMORY_DIR/identity.md"
 sed -i '' "s/__AI_ROLE__/$safe_ai_role/" "$MEMORY_DIR/identity.md"
@@ -168,9 +168,9 @@ cat > "$MEMORY_DIR/user.md" << 'USER_EOF'
 <!-- The AI adds context about the user as it learns through conversations -->
 USER_EOF
 
-safe_user_name=$(printf '%s' "$user_name" | sed 's/[&/\]/\\&/g')
-safe_user_tz=$(printf '%s' "$user_tz" | sed 's/[&/\]/\\&/g')
-safe_user_role=$(printf '%s' "$user_role" | sed 's/[&/\]/\\&/g')
+safe_user_name=$(printf '%s' "$user_name" | sed 's/[&/\\]/\\&/g')
+safe_user_tz=$(printf '%s' "$user_tz" | sed 's/[&/\\]/\\&/g')
+safe_user_role=$(printf '%s' "$user_role" | sed 's/[&/\\]/\\&/g')
 sed -i '' "s/__USER_NAME__/$safe_user_name/" "$MEMORY_DIR/user.md"
 sed -i '' "s/__USER_TZ__/$safe_user_tz/" "$MEMORY_DIR/user.md"
 sed -i '' "s/__USER_ROLE__/$safe_user_role/" "$MEMORY_DIR/user.md"

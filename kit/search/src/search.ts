@@ -47,7 +47,10 @@ export function search(db: Database.Database, query: string, opts: SearchOptions
     results = db.prepare(sql).all(...params) as SearchResult[];
   } catch {
     // If FTS query fails (bad syntax), fall back to simpler query
-    const simpleFts = query.split(/\s+/).filter(w => w.length > 1).join(' ');
+    const simpleWords = query.split(/\s+/)
+      .filter(w => w.length > 1)
+      .map(w => w.replace(/[:*^()"']/g, ''));
+    const simpleFts = simpleWords.filter(w => w.length > 0).map(w => `"${w}"`).join(' OR ');
     if (!simpleFts) return [];
     params[0] = simpleFts;
     try {
@@ -78,7 +81,7 @@ function formatFtsQuery(query: string): string {
   const words = query
     .split(/\s+/)
     .filter(w => w.length > 1)
-    .map(w => w.replace(/['"]/g, ''));
+    .map(w => w.replace(/[:*^()"']/g, ''));
 
   if (words.length === 0) return '';
 

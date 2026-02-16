@@ -59,7 +59,7 @@ Group chat support can be disabled by setting `GROUP_CHAT_ENABLED=false` in your
 
 ## Security
 
-- **User allowlisting:** Set `ALLOWED_USERS` to a comma-separated list of Telegram user IDs to restrict access. When empty, all users are allowed.
+- **User allowlisting:** Set `ALLOWED_USERS` to a comma-separated list of Telegram user IDs to restrict access. When empty, the bot will NOT respond to anyone. You must configure this.
 - **Rate limiting:** Built-in rate limiter prevents abuse (20 messages per minute per user).
 - **No always-on daemon:** The bot runs as a standard Node.js process; stop it anytime.
 - **Official APIs only:** Uses the official Telegraf SDK and Anthropic SDK. No third-party proxies.

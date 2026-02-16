@@ -23,7 +23,7 @@ export function logSession(
     timestamp: new Date().toISOString(),
     sessionId,
     role: entry.role,
-    content: entry.content,
+    content: entry.content.substring(0, 5000),
     source: entry.source,
   };
 
